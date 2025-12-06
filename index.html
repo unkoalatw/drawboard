@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Quantum Canvas - 無限畫布 Pro Max</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; overflow: hidden; touch-action: none; }
+        ::-webkit-scrollbar { display: none; }
+        
+        /* 玻璃擬態 */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+        .dark .glass-panel {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .glass-btn { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .glass-btn:active { transform: scale(0.95); }
+        .glass-btn.active {
+            background: rgba(59, 130, 246, 0.8);
+            color: white;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+            border-color: rgba(96, 165, 250, 0.5);
+        }
+
+        /* 隱藏與顯示動畫 */
+        .panel-hidden {
+            opacity: 0;
+            transform: scale(0.95);
+            pointer-events: none;
+            visibility: hidden;
+        }
+
+        /* 游標 */
+        .cursor-pen { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>') 0 24, crosshair; }
+        .cursor-text-tool { cursor: text; }
+        .cursor-pan { cursor: grab; }
+        .cursor-pan:active { cursor: grabbing; }
+
+        /* 自定義 Range Input */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px;
+            border-radius: 50%;
+            background: white;
+            margin-top: -6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            cursor: pointer;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        .animate-float { animation: float 3s ease-in-out infinite; }
+    </style>
+</head>
+<body class="bg-slate-900 text-white transition-colors duration-500" id="appBody">
+
+    <!-- 1. 畫布層 (Canvas Layer) -->
+    <canvas id="mainCanvas" class="absolute top-0 left-0 w-full h-full block z-0"></canvas>
+
+    <!-- 2. DOM 覆蓋層 (MindMap & Text) -->
+    <div id="overlayLayer" class="absolute top-0 left-0 w-full h-full pointer-events-none z-10 overflow-hidden origin-top-left"></div>
+
+    <!-- 3. UI 介面層 -->
+    
+    <!-- 頂部欄 -->
+    <div class="fixed top-4 left-4 right-4 flex justify-between items-center z-50 pointer-events-none">
+        <div class="pointer-events-auto px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-lg flex items-center gap-2 animate-float">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+            <span class="font-bold tracking-wide">Quantum Canvas</span>
+            <span class="text-[10px] bg-white/20 px-1.5 py-0.5 rounded ml-1">Pro Max</span>
+        </div>
+
+        <div class="pointer-events-auto flex gap-2 p-2 rounded-2xl glass-panel relative">
+            <button onclick="toggleTheme()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="切換模式">
+                <i data-lucide="sun" id="themeIcon" class="w-5 h-5"></i>
+            </button>
+            <div class="w-px h-8 bg-white/20 my-auto"></div>
+            
+            <!-- 背景設定按鈕 (新增) -->
+            <div class="relative">
+                <button onclick="toggleBgPanel()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="背景設定">
+                    <i data-lucide="wallpaper" class="w-5 h-5"></i>
+                </button>
+                <!-- 背景設定面板 (Popover) -->
+                <div id="bgSettingsPanel" class="absolute top-full right-0 mt-2 p-4 w-64 glass-panel rounded-2xl panel-hidden flex flex-col gap-3 z-[60]">
+                    <span class="text-sm font-bold text-gray-300">自訂背景 (Wallpaper)</span>
+                    
+                    <label class="glass-btn p-2 rounded-lg hover:bg-white/10 cursor-pointer flex items-center justify-center gap-2 text-sm border border-white/10">
+                        <i data-lucide="image-plus" class="w-4 h-4"></i>
+                        上傳圖片
+                        <input type="file" id="bgInput" class="hidden" accept="image/*" onchange="handleBgUpload(this)">
+                    </label>
+
+                    <div class="flex flex-col gap-1">
+                        <div class="flex justify-between text-xs text-gray-400">
+                            <span>透明度</span>
+                            <span id="bgOpacityValue">50%</span>
+                        </div>
+                        <input type="range" min="0" max="100" value="50" oninput="setBgOpacity(this.value)">
+                    </div>
+
+                    <button onclick="clearBackground()" class="p-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors">
+                        移除背景
+                    </button>
+                </div>
+            </div>
+
+            <div class="w-px h-8 bg-white/20 my-auto"></div>
+
+            <button onclick="undo()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="復原">
+                <i data-lucide="undo" class="w-5 h-5"></i>
+            </button>
+            <button onclick="redo()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="重做">
+                <i data-lucide="redo" class="w-5 h-5"></i>
+            </button>
+            <button onclick="clearCanvas()" class="glass-btn p-3 rounded-xl hover:bg-red-500/20 text-red-400 hover:text-red-500" title="清空畫布">
+                <i data-lucide="trash-2" class="w-5 h-5"></i>
+            </button>
+
+            <div class="w-px h-8 bg-white/20 my-auto"></div>
+            <button onclick="saveProject()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="儲存">
+                <i data-lucide="download" class="w-5 h-5"></i>
+            </button>
+            <label class="glass-btn p-3 rounded-xl hover:bg-white/10 cursor-pointer" title="開啟">
+                <i data-lucide="upload" class="w-5 h-5"></i>
+                <input type="file" id="fileInput" class="hidden" accept=".json" onchange="loadProject(this)">
+            </label>
+            <button onclick="exportImage()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="匯出圖片">
+                <i data-lucide="image" class="w-5 h-5"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- 底部工具列 -->
+    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto flex flex-col items-center gap-4">
+        
+        <!-- 筆刷與顏色設定面板 (動態顯示/隱藏) -->
+        <div id="settingsPanel" class="flex items-center gap-4 p-3 rounded-xl glass-panel">
+            <!-- 顏色 -->
+            <div class="relative group flex items-center justify-center">
+                <button class="glass-btn p-2 rounded-full hover:bg-white/10" title="更換顏色">
+                    <div id="colorPreview" class="w-6 h-6 rounded-full bg-white border-2 border-white/30 shadow-sm transition-transform group-hover:scale-110"></div>
+                </button>
+                <input type="color" id="colorPicker" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" oninput="setColor(this.value)" value="#ffffff">
+            </div>
+            <div class="w-px h-6 bg-white/20"></div>
+            <!-- 粗細 -->
+            <div class="flex items-center gap-2">
+                <i data-lucide="circle" class="w-3 h-3 opacity-50"></i>
+                <input type="range" min="1" max="50" value="3" class="w-24 h-4 cursor-pointer" oninput="setLineWidth(this.value)" title="筆刷粗細">
+                <i data-lucide="circle" class="w-5 h-5 opacity-80"></i>
+            </div>
+        </div>
+
+        <!-- 主要工具 -->
+        <div class="flex items-end gap-2 p-3 rounded-2xl glass-panel shadow-2xl transition-transform hover:scale-105">
+            <button onclick="setTool('pan')" id="btn-pan" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="抓手 (Space)">
+                <i data-lucide="move" class="w-6 h-6"></i>
+            </button>
+            <button onclick="setTool('select')" id="btn-select" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="選取">
+                <i data-lucide="mouse-pointer-2" class="w-6 h-6"></i>
+            </button>
+            
+            <div class="w-px h-10 bg-white/20 mx-1 my-auto"></div>
+
+            <button onclick="setTool('pencil')" id="btn-pencil" class="glass-btn p-3 rounded-xl hover:bg-white/10 active" title="畫筆">
+                <i data-lucide="pencil" class="w-6 h-6"></i>
+            </button>
+            <button onclick="setTool('text')" id="btn-text" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="文字">
+                <i data-lucide="type" class="w-6 h-6"></i>
+            </button>
+            
+            <!-- 圖片上傳按鈕 (插入到畫布) -->
+            <label class="glass-btn p-3 rounded-xl hover:bg-white/10 cursor-pointer" title="插入圖片">
+                <i data-lucide="image-plus" class="w-6 h-6"></i>
+                <input type="file" class="hidden" accept="image/*" onchange="handleImageUpload(this)">
+            </label>
+
+            <button onclick="setTool('rainbow')" id="btn-rainbow" class="glass-btn p-3 rounded-xl hover:bg-white/10 text-purple-400" title="流光筆">
+                <i data-lucide="palette" class="w-6 h-6"></i>
+            </button>
+            <button onclick="setTool('ai')" id="btn-ai" class="glass-btn p-3 rounded-xl hover:bg-white/10 text-yellow-400" title="AI 智能畫筆">
+                <i data-lucide="wand-2" class="w-6 h-6"></i>
+            </button>
+            <button onclick="setTool('laser')" id="btn-laser" class="glass-btn p-3 rounded-xl hover:bg-white/10 text-red-500" title="雷射筆">
+                <i data-lucide="activity" class="w-6 h-6"></i>
+            </button>
+            <button onclick="setTool('eraser')" id="btn-eraser" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="橡皮擦">
+                <i data-lucide="eraser" class="w-6 h-6"></i>
+            </button>
+            
+            <div class="w-px h-10 bg-white/20 mx-1 my-auto"></div>
+
+            <button onclick="setTool('mindmap')" id="btn-mindmap" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="心智圖">
+                <i data-lucide="share-2" class="w-6 h-6"></i>
+            </button>
+            <button onclick="addFunctionGraph()" class="glass-btn p-3 rounded-xl hover:bg-white/10" title="函數繪圖">
+                <i data-lucide="sigma" class="w-6 h-6"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- 右下角縮放控制 -->
+    <div class="fixed bottom-6 right-6 flex flex-col gap-2 z-50 pointer-events-auto">
+        <button onclick="resetView()" class="glass-btn p-3 rounded-xl glass-panel hover:bg-white/10" title="重置視角">
+            <i data-lucide="grip" class="w-5 h-5"></i>
+        </button>
+        <div class="p-2 rounded-xl glass-panel flex flex-col items-center gap-2">
+            <button onclick="zoom(0.1)" class="p-1 hover:bg-white/20 rounded"><i data-lucide="plus" class="w-4 h-4"></i></button>
+            <span id="zoomLevel" class="text-xs font-mono">100%</span>
+            <button onclick="zoom(-0.1)" class="p-1 hover:bg-white/20 rounded"><i data-lucide="minus" class="w-4 h-4"></i></button>
+        </div>
+    </div>
+
+    <!-- 刪除選取物件按鈕 -->
+    <div id="deleteBtnContainer" class="fixed top-24 left-1/2 -translate-x-1/2 z-50 hidden transition-all duration-300 transform translate-y-[-10px] opacity-0">
+        <div class="flex gap-2 p-2 rounded-xl bg-red-500/20 backdrop-blur-md border border-red-500/30">
+            <span class="px-3 py-2 text-sm text-white font-medium">已選取物件</span>
+            <button onclick="deleteSelected()" class="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center gap-1 shadow-lg">
+                <i data-lucide="trash-2" class="w-4 h-4"></i> 刪除
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. 初始化與全域變數 ---
+        lucide.createIcons();
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('overlayLayer');
+        
+        let state = {
+            darkMode: true,
+            color: '#ffffff',
+            lineWidth: 3, 
+            tool: 'pencil', 
+            view: { x: 0, y: 0, scale: 1 },
+            elements: [],     
+            mindMapNodes: [], 
+            history: [],
+            redoStack: [],
+            laserPaths: [],   
+            selectedId: null,
+            isDrawing: false,
+            isDraggingCanvas: false,
+            currentPath: [],
+            dragStart: { x: 0, y: 0 },
+            // 新增：背景設定
+            background: {
+                src: null,
+                opacity: 0.5
+            }
+        };
+
+        const imageCache = {};
+        const bgCache = { img: null, src: null }; // 專用背景緩存
+
+        // --- 2. 核心功能函式 ---
+
+        function generateId() { return Math.random().toString(36).substr(2, 9); }
+        function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; drawAll(); }
+        window.addEventListener('resize', resize);
+
+        function toWorld(sx, sy) { return { x: (sx - state.view.x) / state.view.scale, y: (sy - state.view.y) / state.view.scale }; }
+        function toScreen(wx, wy) { return { x: wx * state.view.scale + state.view.x, y: wy * state.view.scale + state.view.y }; }
+
+        function setColor(hex) {
+            state.color = hex;
+            document.getElementById('colorPreview').style.backgroundColor = hex;
+            if (['pencil', 'ai', 'text'].includes(state.tool)) setTool(state.tool);
+            else setTool('pencil');
+        }
+
+        function setLineWidth(val) {
+            state.lineWidth = parseInt(val);
+        }
+
+        function clearCanvas() {
+            saveHistory();
+            state.elements = [];
+            state.mindMapNodes = [];
+            state.selectedId = null;
+            renderMindMapNodes();
+            drawAll();
+            showToast('畫布已清空');
+        }
+
+        // --- 2.5 背景功能 ---
+
+        function toggleBgPanel() {
+            const panel = document.getElementById('bgSettingsPanel');
+            panel.classList.toggle('panel-hidden');
+        }
+
+        // 點擊外部關閉面板
+        window.addEventListener('click', function(e) {
+            const panel = document.getElementById('bgSettingsPanel');
+            const btn = document.querySelector('button[onclick="toggleBgPanel()"]');
+            if (!panel.contains(e.target) && !btn.contains(e.target) && !panel.classList.contains('panel-hidden')) {
+                panel.classList.add('panel-hidden');
+            }
+        });
+
+        function handleBgUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                state.background.src = e.target.result;
+                bgCache.src = null; // 強制刷新緩存
+                drawAll();
+                showToast('背景已更換');
+                toggleBgPanel(); // 關閉面板
+            };
+            reader.readAsDataURL(file);
+            input.value = '';
+        }
+
+        function setBgOpacity(val) {
+            state.background.opacity = parseInt(val) / 100;
+            document.getElementById('bgOpacityValue').innerText = val + '%';
+            drawAll();
+        }
+
+        function clearBackground() {
+            state.background.src = null;
+            bgCache.src = null;
+            bgCache.img = null;
+            drawAll();
+            showToast('背景已移除');
+        }
+
+        // --- 3. 圖片與文字處理 ---
+
+        function handleImageUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const center = toWorld(canvas.width/2, canvas.height/2);
+                    const maxSize = 400;
+                    let w = img.width, h = img.height;
+                    if (w > maxSize || h > maxSize) {
+                        const ratio = w/h;
+                        if (w > h) { w = maxSize; h = w/ratio; }
+                        else { h = maxSize; w = h*ratio; }
+                    }
+                    
+                    const newEl = {
+                        type: 'image',
+                        id: generateId(),
+                        x: center.x - w/2,
+                        y: center.y - h/2,
+                        w: w, h: h,
+                        src: e.target.result 
+                    };
+                    saveHistory();
+                    state.elements.push(newEl);
+                    drawAll();
+                    showToast('圖片已插入');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            input.value = ''; 
+        }
+
+        // --- 4. 繪圖與渲染引擎 ---
+
+        function drawAll() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. 繪製自訂背景 (Wallpaper 模式：固定在視窗上，不隨畫布移動)
+            if (state.background.src) {
+                // 快取邏輯，避免閃爍
+                if (bgCache.src !== state.background.src) {
+                    bgCache.img = new Image();
+                    bgCache.img.src = state.background.src;
+                    bgCache.src = state.background.src;
+                    bgCache.img.onload = drawAll; // 載入完成後重繪
+                }
+
+                if (bgCache.img && bgCache.img.complete) {
+                    ctx.save();
+                    ctx.globalAlpha = state.background.opacity;
+                    
+                    // Cover 模式演算法 (類似 CSS background-size: cover)
+                    const canvasRatio = canvas.width / canvas.height;
+                    const imgRatio = bgCache.img.width / bgCache.img.height;
+                    let drawW, drawH, drawX, drawY;
+
+                    if (canvasRatio > imgRatio) {
+                        drawW = canvas.width;
+                        drawH = canvas.width / imgRatio;
+                        drawX = 0;
+                        drawY = (canvas.height - drawH) / 2;
+                    } else {
+                        drawH = canvas.height;
+                        drawW = canvas.height * imgRatio;
+                        drawY = 0;
+                        drawX = (canvas.width - drawW) / 2;
+                    }
+                    
+                    ctx.drawImage(bgCache.img, drawX, drawY, drawW, drawH);
+                    ctx.restore();
+                }
+            }
+
+            // 2. 網格
+            const gridSize = 50 * state.view.scale;
+            const offsetX = state.view.x % gridSize;
+            const offsetY = state.view.y % gridSize;
+            
+            ctx.beginPath();
+            // 根據是否是暗黑模式調整網格顏色，若有背景則讓網格淡一點
+            const gridOpacity = state.background.src ? 0.03 : 0.05;
+            ctx.strokeStyle = state.darkMode ? `rgba(255,255,255,${gridOpacity})` : `rgba(0,0,0,${gridOpacity})`;
+            ctx.lineWidth = 1;
+            for(let x = offsetX; x < canvas.width; x += gridSize) { ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); }
+            for(let y = offsetY; y < canvas.height; y += gridSize) { ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); }
+            ctx.stroke();
+
+            ctx.save();
+            ctx.translate(state.view.x, state.view.y);
+            ctx.scale(state.view.scale, state.view.scale);
+
+            // 3. 元素繪製
+            state.elements.forEach(el => {
+                if (el.type === 'image') {
+                    if (!imageCache[el.id]) {
+                        const img = new Image();
+                        img.src = el.src;
+                        imageCache[el.id] = img;
+                        img.onload = drawAll; 
+                    }
+                    const img = imageCache[el.id];
+                    if (img.complete) {
+                        ctx.drawImage(img, el.x, el.y, el.w, el.h);
+                        if (state.selectedId === el.id) {
+                            ctx.strokeStyle = '#3B82F6';
+                            ctx.lineWidth = 2 / state.view.scale;
+                            ctx.strokeRect(el.x, el.y, el.w, el.h);
+                        }
+                    }
+                    return;
+                }
+
+                ctx.beginPath();
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = el.width || 3;
+                
+                if (el.type === 'path' || el.type === 'rainbow') {
+                    if(el.points.length < 2) return;
+                    ctx.moveTo(el.points[0].x, el.points[0].y);
+                    for(let i=1; i<el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+                    
+                    if (el.type === 'rainbow') {
+                        const grad = ctx.createLinearGradient(el.points[0].x, el.points[0].y, el.points[el.points.length-1].x, el.points[el.points.length-1].y);
+                        grad.addColorStop(0, 'red'); grad.addColorStop(0.5, 'green'); grad.addColorStop(1, 'blue');
+                        ctx.strokeStyle = grad;
+                    } else {
+                        ctx.strokeStyle = el.color;
+                    }
+                    ctx.stroke();
+                } else if (el.type === 'rect') {
+                    ctx.strokeStyle = el.color;
+                    ctx.strokeRect(el.x, el.y, el.w, el.h);
+                } else if (el.type === 'circle') {
+                    ctx.strokeStyle = el.color;
+                    ctx.beginPath();
+                    ctx.arc(el.x, el.y, el.r, 0, Math.PI*2);
+                    ctx.stroke();
+                } else if (el.type === 'line') {
+                    ctx.strokeStyle = el.color;
+                    ctx.moveTo(el.x1, el.y1);
+                    ctx.lineTo(el.x2, el.y2);
+                    ctx.stroke();
+                } else if (el.type === 'graph') {
+                    ctx.strokeStyle = '#10B981';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    let started = false;
+                    for (let tx = -10; tx <= 10; tx += 0.1) {
+                        let ty = tx;
+                        try {
+                            if (el.formula.includes('sin')) ty = Math.sin(tx);
+                            else if (el.formula.includes('cos')) ty = Math.cos(tx);
+                            else if (el.formula.includes('tan')) ty = Math.tan(tx);
+                            else if (el.formula.includes('pow')) ty = Math.pow(tx, 2);
+                            else ty = tx;
+                        } catch(e) {}
+                        const wx = el.x + tx * 20;
+                        const wy = el.y - ty * 20;
+                        if (!started) { ctx.moveTo(wx, wy); started = true; }
+                        else ctx.lineTo(wx, wy);
+                    }
+                    ctx.stroke();
+                }
+            });
+
+            if (state.currentPath.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(state.currentPath[0].x, state.currentPath[0].y);
+                for(let i=1; i<state.currentPath.length; i++) ctx.lineTo(state.currentPath[i].x, state.currentPath[i].y);
+                
+                ctx.strokeStyle = state.tool === 'rainbow' ? `hsl(${Date.now() % 360}, 100%, 50%)` : state.color;
+                ctx.lineWidth = state.tool === 'eraser' ? (20 / state.view.scale) : state.lineWidth; 
+                
+                if (state.tool === 'eraser') {
+                    ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
+                }
+                ctx.stroke();
+            }
+
+            state.laserPaths.forEach(p => {
+                if (p.path.length < 2) return;
+                const age = Date.now() - p.time;
+                const opacity = Math.max(0, 1 - age/1000);
+                ctx.beginPath();
+                ctx.moveTo(p.path[0].x, p.path[0].y);
+                for(let i=1; i<p.path.length; i++) ctx.lineTo(p.path[i].x, p.path[i].y);
+                ctx.strokeStyle = `rgba(255, 0, 0, ${opacity})`;
+                ctx.lineWidth = 4;
+                ctx.stroke();
+            });
+
+            state.mindMapNodes.forEach(node => {
+                if (node.parentId) {
+                    const parent = state.mindMapNodes.find(n => n.id === node.parentId);
+                    if (parent) {
+                        ctx.beginPath();
+                        ctx.moveTo(parent.x + parent.w/2, parent.y + parent.h/2);
+                        const midX = (parent.x + node.x) / 2;
+                        ctx.bezierCurveTo(midX, parent.y + parent.h/2, midX, node.y + node.h/2, node.x + node.w/2, node.y + node.h/2);
+                        ctx.strokeStyle = state.darkMode ? '#60A5FA' : '#2563EB';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+            });
+
+            ctx.restore();
+            overlay.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+        }
+
+        // --- 5. DOM 節點渲染 (心智圖 & 純文字) ---
+
+        function renderMindMapNodes() {
+            overlay.innerHTML = '';
+            
+            state.mindMapNodes.forEach(node => {
+                const el = document.createElement('div');
+                const isText = node.styleType === 'text';
+                
+                let baseClass = `absolute flex items-center justify-center transition-shadow pointer-events-auto `;
+                let styleClass = '';
+                
+                if (isText) {
+                    styleClass = `p-1 min-w-[50px] ${state.selectedId === node.id ? 'border border-dashed border-blue-400' : ''}`;
+                } else {
+                    styleClass = `p-3 rounded-xl border-2 shadow-lg backdrop-blur-md ${state.selectedId === node.id ? 'ring-4 ring-blue-500/50 border-blue-500' : 'border-gray-400/30'} ${state.darkMode ? 'bg-slate-800/90 text-white' : 'bg-white/90 text-slate-800'}`;
+                }
+
+                el.className = baseClass + styleClass;
+                el.style.left = node.x + 'px';
+                el.style.top = node.y + 'px';
+                if (!isText) {
+                    el.style.width = node.w + 'px';
+                    el.style.minHeight = node.h + 'px';
+                }
+                el.style.fontSize = (node.fontSize || (node.level === 0 ? 18 : 14)) + 'px';
+                if (isText) el.style.color = node.color || state.color;
+                
+                const content = document.createElement('div');
+                content.contentEditable = true;
+                content.className = "outline-none w-full text-center bg-transparent break-words whitespace-pre-wrap min-w-[1em] cursor-text select-text"; 
+                content.innerText = node.text;
+                if(isText) content.style.textAlign = "left";
+                
+                el.onclick = (e) => { 
+                    e.stopPropagation(); 
+                    if (state.selectedId !== node.id) {
+                        selectNode(node.id); 
+                    }
+                };
+                
+                content.onpointerdown = (e) => e.stopPropagation();
+
+                content.onblur = (e) => { node.text = e.target.innerText; };
+
+                el.appendChild(content);
+                overlay.appendChild(el);
+            });
+            updateDeleteBtn();
+        }
+
+        // --- 6. 互動事件 ---
+
+        function selectNode(id) {
+            state.selectedId = id;
+            renderMindMapNodes();
+            drawAll(); 
+        }
+
+        canvas.addEventListener('pointerdown', e => {
+            const { clientX, clientY } = e;
+            const worldPos = toWorld(clientX, clientY);
+
+            const clickedImg = state.elements.find(el => 
+                el.type === 'image' && 
+                worldPos.x >= el.x && worldPos.x <= el.x + el.w &&
+                worldPos.y >= el.y && worldPos.y <= el.y + el.h
+            );
+            
+            if (clickedImg && state.tool === 'select') {
+                selectNode(clickedImg.id);
+                return;
+            }
+
+            if (state.tool === 'pan' || (e.buttons === 1 && e.getModifierState && e.getModifierState('Space'))) {
+                state.isDraggingCanvas = true;
+                state.dragStart = { x: clientX, y: clientY };
+                canvas.classList.add('cursor-grabbing');
+                return;
+            }
+
+            if (state.tool === 'text') {
+                saveHistory();
+                const newNode = {
+                    id: generateId(),
+                    x: worldPos.x, y: worldPos.y, 
+                    w: 0, h: 0, 
+                    text: '輸入文字...', 
+                    styleType: 'text', 
+                    color: state.color,
+                    fontSize: 20
+                };
+                state.mindMapNodes.push(newNode);
+                selectNode(newNode.id);
+                setTool('select');
+                return;
+            }
+
+            if (state.tool === 'mindmap') {
+                const clickedNode = state.mindMapNodes.find(n => 
+                    worldPos.x >= n.x && worldPos.x <= n.x + n.w &&
+                    worldPos.y >= n.y && worldPos.y <= n.y + n.h
+                );
+                
+                if (clickedNode) {
+                    selectNode(clickedNode.id);
+                } else {
+                    saveHistory();
+                    if (state.selectedId && state.mindMapNodes.find(n=>n.id===state.selectedId)?.styleType !== 'text') {
+                        const parent = state.mindMapNodes.find(n => n.id === state.selectedId);
+                        const newNode = {
+                            id: generateId(),
+                            x: worldPos.x - 50, y: worldPos.y - 20, w: 100, h: 40,
+                            text: '子節點', parentId: state.selectedId, level: (parent?.level || 0) + 1
+                        };
+                        state.mindMapNodes.push(newNode);
+                        state.selectedId = newNode.id; 
+                    } else {
+                        const newNode = {
+                            id: generateId(),
+                            x: worldPos.x - 60, y: worldPos.y - 25, w: 120, h: 50,
+                            text: '中心主題', parentId: null, level: 0
+                        };
+                        state.mindMapNodes.push(newNode);
+                        state.selectedId = newNode.id;
+                    }
+                    renderMindMapNodes();
+                    drawAll();
+                }
+                return;
+            }
+
+            if (['pencil', 'rainbow', 'eraser', 'ai'].includes(state.tool)) {
+                state.isDrawing = true;
+                state.currentPath = [{ x: worldPos.x, y: worldPos.y }];
+            }
+            if (state.tool === 'laser') {
+                state.isDrawing = true;
+                state.laserPaths.push({ time: Date.now(), path: [{x: worldPos.x, y: worldPos.y}] });
+            }
+
+            if (state.selectedId) {
+                state.selectedId = null;
+                renderMindMapNodes();
+                drawAll();
+            }
+        });
+
+        canvas.addEventListener('pointermove', e => {
+            const { clientX, clientY } = e;
+            
+            if (state.isDraggingCanvas) {
+                const dx = clientX - state.dragStart.x;
+                const dy = clientY - state.dragStart.y;
+                state.view.x += dx;
+                state.view.y += dy;
+                state.dragStart = { x: clientX, y: clientY };
+                drawAll();
+                overlay.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+                return;
+            }
+
+            if (!state.isDrawing) return;
+            const worldPos = toWorld(clientX, clientY);
+
+            if (state.tool === 'laser') {
+                const lastPath = state.laserPaths[state.laserPaths.length - 1];
+                if(lastPath) lastPath.path.push({ x: worldPos.x, y: worldPos.y });
+            } else {
+                state.currentPath.push({ x: worldPos.x, y: worldPos.y });
+                
+                if (state.tool === 'eraser') {
+                    const radius = 20 / state.view.scale;
+                    state.elements = state.elements.filter(el => {
+                        if (el.type !== 'path' && el.type !== 'rainbow') return true;
+                        return !el.points.some(p => Math.hypot(p.x - worldPos.x, p.y - worldPos.y) < radius);
+                    });
+                    drawAll();
+                } else {
+                    drawAll();
+                }
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            state.isDraggingCanvas = false;
+            canvas.classList.remove('cursor-grabbing');
+
+            if (!state.isDrawing) return;
+            state.isDrawing = false;
+            
+            if (state.tool === 'laser') return;
+            if (state.tool === 'eraser') { saveHistory(); return; }
+
+            const path = state.currentPath;
+            state.currentPath = [];
+            
+            if (path.length < 2) return;
+
+            let newEl = null;
+            if (state.tool === 'ai') {
+                const shape = recognizeShape(path);
+                if (shape) {
+                    newEl = { ...shape, id: generateId(), color: state.color, width: state.lineWidth };
+                    showToast('AI 辨識: ' + (shape.type === 'circle' ? '圓形' : '矩形/直線'));
+                } else {
+                    newEl = { type: 'path', points: path, color: state.color, width: state.lineWidth, id: generateId() };
+                }
+            } else {
+                newEl = { 
+                    type: state.tool === 'rainbow' ? 'rainbow' : 'path', 
+                    points: path, 
+                    color: state.tool === 'rainbow' ? 'rainbow' : state.color, 
+                    width: state.lineWidth, 
+                    id: generateId() 
+                };
+            }
+
+            if (newEl) {
+                saveHistory();
+                state.elements.push(newEl);
+                drawAll();
+            }
+        });
+
+        canvas.addEventListener('wheel', e => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const delta = -Math.sign(e.deltaY);
+                zoom(delta * 0.1);
+            }
+        }, { passive: false });
+
+        // --- 7. 其他邏輯 ---
+
+        function recognizeShape(points) {
+            if (points.length < 5) return null;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            points.forEach(p => {
+                minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+                minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+            });
+            const w = maxX - minX, h = maxY - minY;
+            const dist = Math.hypot(points[0].x - points[points.length-1].x, points[0].y - points[points.length-1].y);
+            if (dist < 50) {
+                const ratio = w / h;
+                if (ratio > 0.8 && ratio < 1.2) return { type: 'circle', x: minX + w/2, y: minY + h/2, r: w/2 };
+                return { type: 'rect', x: minX, y: minY, w: w, h: h };
+            }
+            return { type: 'line', x1: points[0].x, y1: points[0].y, x2: points[points.length-1].x, y2: points[points.length-1].y };
+        }
+
+        function setTool(t) {
+            state.tool = t;
+            document.querySelectorAll('.glass-btn').forEach(b => b.classList.remove('active'));
+            
+            const btn = document.getElementById(`btn-${t}`);
+            if(btn) btn.classList.add('active');
+            
+            canvas.className = `absolute top-0 left-0 w-full h-full block z-0 ${t === 'pan' ? 'cursor-pan' : (t === 'text' ? 'cursor-text-tool' : 'cursor-pen')}`;
+            
+            const settingsPanel = document.getElementById('settingsPanel');
+            const toolsWithSettings = ['pencil', 'rainbow', 'ai', 'text'];
+            
+            if (toolsWithSettings.includes(t)) {
+                settingsPanel.classList.remove('panel-hidden');
+            } else {
+                settingsPanel.classList.add('panel-hidden');
+            }
+
+            showToast(`工具: ${t}`);
+        }
+
+        function toggleTheme() {
+            state.darkMode = !state.darkMode;
+            document.getElementById('appBody').className = state.darkMode ? 'bg-slate-900 text-white transition-colors duration-500 dark' : 'bg-gray-50 text-slate-900 transition-colors duration-500';
+            document.getElementById('themeIcon').setAttribute('data-lucide', state.darkMode ? 'sun' : 'moon');
+            lucide.createIcons();
+            if (state.color === '#ffffff' || state.color === '#000000') {
+                const newColor = state.darkMode ? '#ffffff' : '#000000';
+                setColor(newColor);
+                document.getElementById('colorPicker').value = newColor;
+            }
+            renderMindMapNodes();
+            drawAll();
+        }
+
+        function zoom(amount) {
+            const newScale = Math.max(0.1, Math.min(5, state.view.scale + amount));
+            const w = canvas.width, h = canvas.height;
+            const worldCenterBefore = toWorld(w/2, h/2);
+            state.view.scale = newScale;
+            state.view.x = (w/2) - worldCenterBefore.x * newScale;
+            state.view.y = (h/2) - worldCenterBefore.y * newScale;
+            document.getElementById('zoomLevel').innerText = Math.round(state.view.scale * 100) + '%';
+            drawAll();
+            overlay.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+        }
+        function resetView() { state.view = { x: 0, y: 0, scale: 1 }; zoom(0); }
+
+        function saveHistory() {
+            state.history.push({
+                elements: JSON.parse(JSON.stringify(state.elements)),
+                mindMapNodes: JSON.parse(JSON.stringify(state.mindMapNodes))
+            });
+            if (state.history.length > 20) state.history.shift();
+            state.redoStack = [];
+        }
+
+        function undo() {
+            if (state.history.length === 0) return;
+            state.redoStack.push({ elements: state.elements, mindMapNodes: state.mindMapNodes });
+            const last = state.history.pop();
+            state.elements = last.elements;
+            state.mindMapNodes = last.mindMapNodes;
+            renderMindMapNodes();
+            drawAll();
+            showToast('已復原');
+        }
+
+        function redo() {
+            if (state.redoStack.length === 0) return;
+            state.history.push({ elements: state.elements, mindMapNodes: state.mindMapNodes });
+            const next = state.redoStack.pop();
+            state.elements = next.elements;
+            state.mindMapNodes = next.mindMapNodes;
+            renderMindMapNodes();
+            drawAll();
+            showToast('已重做');
+        }
+
+        function deleteSelected() {
+            if (!state.selectedId) return;
+            saveHistory();
+            
+            const ids = new Set([state.selectedId]);
+            const findKids = (pid) => {
+                state.mindMapNodes.forEach(n => { if (n.parentId === pid) { ids.add(n.id); findKids(n.id); } });
+            };
+            findKids(state.selectedId);
+            state.mindMapNodes = state.mindMapNodes.filter(n => !ids.has(n.id));
+            
+            state.elements = state.elements.filter(el => el.id !== state.selectedId);
+            
+            state.selectedId = null;
+            renderMindMapNodes();
+            drawAll();
+            showToast('已刪除');
+        }
+
+        function updateDeleteBtn() {
+            const btn = document.getElementById('deleteBtnContainer');
+            if (state.selectedId) {
+                btn.classList.remove('hidden');
+                setTimeout(() => { btn.classList.remove('translate-y-[-10px]', 'opacity-0'); }, 10);
+            } else {
+                btn.classList.add('translate-y-[-10px]', 'opacity-0');
+                setTimeout(() => btn.classList.add('hidden'), 300);
+            }
+        }
+
+        function addFunctionGraph() {
+            const f = prompt("輸入函數 (例如: sin(x))", "sin(x)");
+            if (f) {
+                saveHistory();
+                const c = toWorld(canvas.width/2, canvas.height/2);
+                state.elements.push({ type: 'graph', formula: f, x: c.x, y: c.y, id: generateId() });
+                drawAll();
+            }
+        }
+
+        function saveProject() {
+            const data = JSON.stringify(state);
+            const blob = new Blob([data], {type: "application/json"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.download = `project-${Date.now()}.json`;
+            a.href = url;
+            a.click();
+        }
+
+        function loadProject(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    state.elements = data.elements || [];
+                    state.mindMapNodes = data.mindMapNodes || [];
+                    if(data.view) state.view = data.view;
+                    // 還原背景
+                    if (data.background) state.background = data.background;
+                    drawAll();
+                    renderMindMapNodes();
+                    showToast('專案載入成功');
+                } catch(err) {
+                    showToast('檔案格式錯誤', 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function exportImage() {
+            const link = document.createElement('a');
+            link.download = 'canvas.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        function showToast(msg, type='info') {
+            const div = document.createElement('div');
+            div.className = `fixed top-8 left-1/2 -translate-x-1/2 z-[60] px-6 py-3 rounded-full shadow-2xl backdrop-blur-xl border border-white/20 text-white font-medium text-sm animate-[float_0.3s_ease-out] ${type === 'error' ? 'bg-red-500/80' : 'bg-slate-800/80'}`;
+            div.innerText = msg;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 3000);
+        }
+
+        function animate() {
+            if (state.laserPaths.length > 0) {
+                const now = Date.now();
+                state.laserPaths = state.laserPaths.filter(p => now - p.time < 1000);
+                drawAll();
+            }
+            requestAnimationFrame(animate);
+        }
+
+        resize();
+        animate();
+        setTool('pencil');
+    </script>
+</body>
+</html>
